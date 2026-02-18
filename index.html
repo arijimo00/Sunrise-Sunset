@@ -1,0 +1,1187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sunrise-Sunset Skill Classifier</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; }
+
+    /* Upload areas */
+    .upload-zone {
+      border: 2px dashed #d1d5db;
+      transition: border-color 0.2s, background 0.2s;
+      cursor: pointer;
+    }
+    .upload-zone:hover { border-color: #f59e0b; background: #fffbeb; }
+    .upload-zone.drag-over { border-color: #f59e0b; background: #fffbeb; }
+    .upload-zone.loaded { border-color: #10b981; background: #f0fdf4; }
+
+    /* Tabs */
+    .tab-btn { border-bottom: 2px solid transparent; transition: border-color 0.2s, color 0.2s; }
+    .tab-btn.active { border-bottom-color: #f59e0b; color: #92400e; font-weight: 600; }
+    .tab-pane { display: none; }
+    .tab-pane.active { display: block; }
+
+    /* Table sort indicators */
+    th.sort-asc::after { content: ' ↑'; font-size: 0.75rem; }
+    th.sort-desc::after { content: ' ↓'; font-size: 0.75rem; }
+    th[data-sort] { cursor: pointer; user-select: none; }
+    th[data-sort]:hover { background: #fef3c7; }
+
+    /* Score bar */
+    .score-bar-track {
+      height: 6px; border-radius: 3px;
+      background: linear-gradient(to right, #ef4444 0%, #f59e0b 45%, #10b981 100%);
+      position: relative;
+    }
+    .score-bar-thumb {
+      position: absolute; top: -3px;
+      width: 12px; height: 12px;
+      border-radius: 50%; background: white;
+      border: 2px solid #374151;
+      transform: translateX(-50%);
+      pointer-events: none;
+    }
+
+    /* Badges */
+    .badge-SR   { background: #d1fae5; color: #065f46; }
+    .badge-LS   { background: #dcfce7; color: #166534; }
+    .badge-NT   { background: #dbeafe; color: #1e40af; }
+    .badge-LSS  { background: #fef3c7; color: #92400e; }
+    .badge-SS   { background: #fee2e2; color: #991b1b; }
+    .badge-High   { background: #d1fae5; color: #065f46; }
+    .badge-Medium { background: #fef3c7; color: #92400e; }
+    .badge-Low    { background: #fee2e2; color: #991b1b; }
+
+    /* Range slider style */
+    input[type=range] { accent-color: #f59e0b; }
+
+    /* Collapsible */
+    .collapsible-content { display: none; }
+    .collapsible-content.open { display: block; }
+
+    /* Responsive table wrapper */
+    .table-wrapper { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.82rem; }
+    th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #e5e7eb; white-space: nowrap; }
+    thead th { background: #f9fafb; font-weight: 600; color: #374151; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    tbody tr:hover { background: #fafafa; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+<!-- ===== HEADER ===== -->
+<header class="bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 text-white shadow-lg">
+  <div class="max-w-6xl mx-auto px-4 py-7 flex items-center gap-4">
+    <div class="text-4xl select-none">🌅</div>
+    <div>
+      <h1 class="text-2xl font-bold tracking-tight">Sunrise-Sunset Skill Classifier</h1>
+      <p class="mt-1 text-amber-100 text-sm">Identify skills with growing demand & scarce supply (Sunrise) vs. declining relevance (Sunset)</p>
+    </div>
+  </div>
+</header>
+
+<main class="max-w-6xl mx-auto px-4 py-8 space-y-8">
+
+  <!-- ===== STEP 1: DATA UPLOAD ===== -->
+  <section class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+    <div class="flex items-center gap-3 mb-5">
+      <span class="w-8 h-8 rounded-full bg-amber-500 text-white flex items-center justify-center font-bold text-sm">1</span>
+      <h2 class="text-lg font-semibold text-gray-800">Upload Input Data</h2>
+    </div>
+    <p class="text-sm text-gray-500 mb-5">Upload three separate CSV files or paste CSV data. Each file must contain a <code class="bg-gray-100 px-1 rounded">skill_name</code> column plus the required field. <a href="#" class="text-amber-600 underline" onclick="loadSampleData();return false;">Load sample data →</a></p>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+      <!-- Supply -->
+      <div>
+        <h3 class="font-semibold text-gray-700 mb-2 text-sm">Table A — Supply <span class="text-gray-400 font-normal">(required)</span></h3>
+        <p class="text-xs text-gray-500 mb-2">Needs: <code class="bg-gray-100 px-1 rounded">skill_name</code>, <code class="bg-gray-100 px-1 rounded">talent_pool_size</code></p>
+        <div id="upload-supply" class="upload-zone rounded-lg p-5 text-center" onclick="document.getElementById('file-supply').click()" ondragover="dragOver(event,'supply')" ondragleave="dragLeave('supply')" ondrop="dropFile(event,'supply')">
+          <div class="text-3xl mb-2">📋</div>
+          <p class="text-sm text-gray-500" id="supply-label">Drop file or click to upload</p>
+          <input type="file" id="file-supply" accept=".csv,.txt" class="hidden" onchange="handleFile(event,'supply')">
+        </div>
+        <textarea id="text-supply" class="mt-2 w-full h-20 text-xs border border-gray-200 rounded p-2 font-mono resize-none" placeholder="Or paste CSV here..." oninput="parseTextarea('supply')"></textarea>
+        <p class="text-xs text-red-500 mt-1 hidden" id="err-supply"></p>
+      </div>
+
+      <!-- Demand Current -->
+      <div>
+        <h3 class="font-semibold text-gray-700 mb-2 text-sm">Table B — Demand Current Year <span class="text-gray-400 font-normal">(required)</span></h3>
+        <p class="text-xs text-gray-500 mb-2">Needs: <code class="bg-gray-100 px-1 rounded">skill_name</code>, <code class="bg-gray-100 px-1 rounded">job_openings_current</code></p>
+        <div id="upload-current" class="upload-zone rounded-lg p-5 text-center" onclick="document.getElementById('file-current').click()" ondragover="dragOver(event,'current')" ondragleave="dragLeave('current')" ondrop="dropFile(event,'current')">
+          <div class="text-3xl mb-2">📈</div>
+          <p class="text-sm text-gray-500" id="current-label">Drop file or click to upload</p>
+          <input type="file" id="file-current" accept=".csv,.txt" class="hidden" onchange="handleFile(event,'current')">
+        </div>
+        <textarea id="text-current" class="mt-2 w-full h-20 text-xs border border-gray-200 rounded p-2 font-mono resize-none" placeholder="Or paste CSV here..." oninput="parseTextarea('current')"></textarea>
+        <p class="text-xs text-red-500 mt-1 hidden" id="err-current"></p>
+      </div>
+
+      <!-- Demand Previous -->
+      <div>
+        <h3 class="font-semibold text-gray-700 mb-2 text-sm">Table C — Demand Previous Year <span class="text-gray-400 font-normal">(required)</span></h3>
+        <p class="text-xs text-gray-500 mb-2">Needs: <code class="bg-gray-100 px-1 rounded">skill_name</code>, <code class="bg-gray-100 px-1 rounded">job_openings_previous</code></p>
+        <div id="upload-previous" class="upload-zone rounded-lg p-5 text-center" onclick="document.getElementById('file-previous').click()" ondragover="dragOver(event,'previous')" ondragleave="dragLeave('previous')" ondrop="dropFile(event,'previous')">
+          <div class="text-3xl mb-2">📉</div>
+          <p class="text-sm text-gray-500" id="previous-label">Drop file or click to upload</p>
+          <input type="file" id="file-previous" accept=".csv,.txt" class="hidden" onchange="handleFile(event,'previous')">
+        </div>
+        <textarea id="text-previous" class="mt-2 w-full h-20 text-xs border border-gray-200 rounded p-2 font-mono resize-none" placeholder="Or paste CSV here..." oninput="parseTextarea('previous')"></textarea>
+        <p class="text-xs text-red-500 mt-1 hidden" id="err-previous"></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== STEP 2: CONFIGURATION ===== -->
+  <section class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+    <div class="flex items-center gap-3 mb-5">
+      <span class="w-8 h-8 rounded-full bg-amber-500 text-white flex items-center justify-center font-bold text-sm">2</span>
+      <h2 class="text-lg font-semibold text-gray-800">Configure Analysis</h2>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <!-- Weight Preset -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-2">Weight Preset</label>
+        <select id="weight-preset" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-400 focus:border-amber-400" onchange="onPresetChange()">
+          <option value="balanced">Balanced (50/50) — Default</option>
+          <option value="demand_led">Demand-Led (60/40) — Growth Focus</option>
+          <option value="supply_constrained">Supply-Constrained (40/60) — Hiring Focus</option>
+          <option value="custom">Custom</option>
+        </select>
+      </div>
+
+      <!-- Scope -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-2">Percentile Scope</label>
+        <select id="scope" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-400 focus:border-amber-400">
+          <option value="global">Global — Compare all skills together</option>
+          <option value="sub_family">Sub-Family — Compare within groups</option>
+        </select>
+      </div>
+
+      <!-- Include Partial Matches -->
+      <div class="flex items-start gap-3 pt-6">
+        <input type="checkbox" id="include-partial" class="mt-0.5 h-4 w-4 accent-amber-500">
+        <div>
+          <label for="include-partial" class="text-sm font-medium text-gray-700">Include Partial Matches</label>
+          <p class="text-xs text-gray-500 mt-0.5">Skills in 2 of 3 tables (Low confidence)</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Custom Weights (shown when custom preset selected) -->
+    <div id="custom-weights-panel" class="hidden mt-5 p-4 bg-amber-50 rounded-lg border border-amber-200">
+      <h4 class="text-sm font-semibold text-amber-800 mb-3">Custom Weights</h4>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label class="text-sm text-gray-700">Demand Weight: <span id="w-demand-val" class="font-bold text-amber-700">0.50</span></label>
+          <input type="range" id="w-demand" min="0" max="100" value="50" class="w-full mt-1" oninput="onWeightSlider()">
+        </div>
+        <div>
+          <label class="text-sm text-gray-700">Supply Weight: <span id="w-supply-val" class="font-bold text-amber-700">0.50</span></label>
+          <input type="range" id="w-supply" min="0" max="100" value="50" class="w-full mt-1" oninput="onWeightSlider()">
+        </div>
+      </div>
+      <p class="text-xs text-amber-700 mt-2">Weights auto-balance to sum to 1.0</p>
+    </div>
+
+    <!-- Advanced: Thresholds -->
+    <div class="mt-5">
+      <button onclick="toggleAdvanced()" class="text-sm text-amber-600 hover:text-amber-700 font-medium flex items-center gap-1">
+        <span id="adv-icon">▶</span> Advanced: Custom Classification Thresholds
+      </button>
+      <div id="advanced-panel" class="collapsible-content mt-3 p-4 bg-gray-50 rounded-lg border border-gray-200">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Sunrise (≥)</label>
+            <input type="number" id="t-sunrise" value="75" min="0" max="100" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Likely Sunrise (≥)</label>
+            <input type="number" id="t-likely-sunrise" value="55" min="0" max="100" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Neutral (≥)</label>
+            <input type="number" id="t-neutral" value="45" min="0" max="100" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Likely Sunset (≥)</label>
+            <input type="number" id="t-likely-sunset" value="25" min="0" max="100" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm">
+          </div>
+        </div>
+        <p class="text-xs text-gray-500 mt-2">Scores below Likely Sunset are classified as Sunset.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== STEP 3: RUN ANALYSIS ===== -->
+  <div class="flex flex-col items-center gap-3">
+    <button id="run-btn" onclick="runAnalysisUI()" class="px-10 py-3.5 bg-gradient-to-r from-amber-500 to-orange-500 text-white font-bold rounded-xl shadow-md hover:from-amber-600 hover:to-orange-600 active:scale-95 transition-all text-base">
+      Run Analysis →
+    </button>
+    <p id="run-error" class="text-sm text-red-600 hidden"></p>
+  </div>
+
+  <!-- ===== RESULTS ===== -->
+  <section id="results-section" class="hidden space-y-6">
+
+    <!-- Summary Cards -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4" id="summary-cards"></div>
+
+    <!-- Classification Bar -->
+    <div id="class-bar-wrap" class="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+      <h3 class="text-sm font-semibold text-gray-700 mb-3">Classification Distribution</h3>
+      <div id="class-bar" class="flex rounded-full overflow-hidden h-7 text-xs font-semibold"></div>
+      <div id="class-legend" class="flex flex-wrap gap-3 mt-3 text-xs"></div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200">
+      <div class="flex border-b border-gray-200 overflow-x-auto">
+        <button class="tab-btn active px-5 py-3.5 text-sm whitespace-nowrap" onclick="switchTab('results')">Results Table</button>
+        <button class="tab-btn px-5 py-3.5 text-sm whitespace-nowrap" onclick="switchTab('recon')">Reconciliation</button>
+        <button class="tab-btn px-5 py-3.5 text-sm whitespace-nowrap" onclick="switchTab('charts')">Charts</button>
+        <button class="tab-btn px-5 py-3.5 text-sm whitespace-nowrap" onclick="switchTab('sensitivity')">Sensitivity Analysis</button>
+      </div>
+
+      <!-- Tab: Results Table -->
+      <div id="tab-results" class="tab-pane active p-5">
+        <div class="flex flex-wrap items-center gap-3 mb-4">
+          <input type="text" id="search-input" placeholder="Search skill name..." class="border border-gray-300 rounded-lg px-3 py-2 text-sm flex-1 min-w-48 focus:ring-2 focus:ring-amber-400 focus:border-amber-400" oninput="applyFilters()">
+          <select id="filter-class" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-400" onchange="applyFilters()">
+            <option value="">All Classifications</option>
+            <option value="Sunrise">Sunrise</option>
+            <option value="Likely Sunrise">Likely Sunrise</option>
+            <option value="Neutral/Transitional">Neutral/Transitional</option>
+            <option value="Likely Sunset">Likely Sunset</option>
+            <option value="Sunset">Sunset</option>
+          </select>
+          <select id="filter-confidence" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-400" onchange="applyFilters()">
+            <option value="">All Confidence</option>
+            <option value="High">High</option>
+            <option value="Medium">Medium</option>
+            <option value="Low">Low</option>
+          </select>
+        </div>
+        <div class="table-wrapper">
+          <table id="results-table">
+            <thead>
+              <tr>
+                <th data-sort="skill_name">#&nbsp;Skill Name</th>
+                <th data-sort="sub_family">Sub-Family</th>
+                <th data-sort="talent_pool_size">Talent Pool</th>
+                <th data-sort="demand_previous_year">Demand Prev</th>
+                <th data-sort="demand_current_year">Demand Curr</th>
+                <th data-sort="demand_growth_rate">Growth Rate</th>
+                <th data-sort="supply_pressure_index">Supply Pressure</th>
+                <th data-sort="demand_growth_percentile">Growth Pctl</th>
+                <th data-sort="supply_pressure_percentile">Supply Pctl</th>
+                <th data-sort="sunrise_score">Sunrise Score</th>
+                <th data-sort="classification">Classification</th>
+                <th data-sort="confidence">Confidence</th>
+              </tr>
+            </thead>
+            <tbody id="results-tbody"></tbody>
+          </table>
+        </div>
+        <p class="text-xs text-gray-400 mt-2" id="row-count"></p>
+      </div>
+
+      <!-- Tab: Reconciliation -->
+      <div id="tab-recon" class="tab-pane p-5">
+        <div id="recon-content"></div>
+      </div>
+
+      <!-- Tab: Charts -->
+      <div id="tab-charts" class="tab-pane p-5">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <div>
+            <h3 class="text-sm font-semibold text-gray-700 mb-3">Classification Distribution</h3>
+            <div class="relative h-64"><canvas id="chart-donut"></canvas></div>
+          </div>
+          <div>
+            <h3 class="text-sm font-semibold text-gray-700 mb-3">Top 15 Skills by Sunrise Score</h3>
+            <div class="relative h-64"><canvas id="chart-bar"></canvas></div>
+          </div>
+          <div class="lg:col-span-2">
+            <h3 class="text-sm font-semibold text-gray-700 mb-1">Positioning Map: Growth Percentile vs. Supply Percentile</h3>
+            <p class="text-xs text-gray-500 mb-3">Upper-right = Sunrise (high growth + scarce talent). Hover for skill details.</p>
+            <div class="relative h-72"><canvas id="chart-scatter"></canvas></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab: Sensitivity -->
+      <div id="tab-sensitivity" class="tab-pane p-5">
+        <div id="sensitivity-content"></div>
+      </div>
+    </div>
+
+    <!-- Export Buttons -->
+    <div class="flex flex-wrap gap-3 justify-end">
+      <button onclick="exportCSV()" class="px-5 py-2.5 bg-white border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 flex items-center gap-2">
+        <span>⬇</span> Export CSV
+      </button>
+      <button onclick="exportJSON()" class="px-5 py-2.5 bg-white border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 flex items-center gap-2">
+        <span>⬇</span> Export JSON
+      </button>
+    </div>
+
+  </section>
+
+</main>
+
+<footer class="text-center py-6 text-xs text-gray-400 border-t border-gray-200 mt-10">
+  Sunrise-Sunset Skill Classifier &mdash; Browser-based analysis, no data leaves your device.
+</footer>
+
+<!-- ===== JAVASCRIPT ===== -->
+<script>
+// ============================================================
+//   DATA STORE
+// ============================================================
+const store = {
+  supply: null,
+  current: null,
+  previous: null,
+  results: null,
+  recon: null,
+  sortCol: 'sunrise_score',
+  sortDir: 'desc',
+  charts: {},
+};
+
+// ============================================================
+//   CSV PARSER
+// ============================================================
+function parseCSV(text) {
+  text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  if (!text) return [];
+
+  const lines = [];
+  let inQ = false, cur = '', row = [];
+
+  for (let i = 0; i <= text.length; i++) {
+    const ch = i < text.length ? text[i] : '\n';
+    if (ch === '"') {
+      if (inQ && text[i+1] === '"') { cur += '"'; i++; }
+      else inQ = !inQ;
+    } else if (ch === ',' && !inQ) {
+      row.push(cur.trim()); cur = '';
+    } else if (ch === '\n' && !inQ) {
+      row.push(cur.trim()); cur = '';
+      if (row.some(c => c !== '')) lines.push(row);
+      row = [];
+    } else {
+      cur += ch;
+    }
+  }
+
+  if (!lines.length) return [];
+  const headers = lines[0].map(h => h.toLowerCase().trim());
+  const records = [];
+  for (let i = 1; i < lines.length; i++) {
+    const obj = {};
+    headers.forEach((h, idx) => { obj[h] = lines[i][idx] !== undefined ? lines[i][idx] : ''; });
+    records.push(obj);
+  }
+  return records;
+}
+
+// ============================================================
+//   SAMPLE DATA
+// ============================================================
+const SAMPLE = {
+  supply: `skill_name,sub_family,talent_pool_size
+Microarchitecture,Silicon & SoC Design,2400
+ASIC Design,Silicon & SoC Design,1800
+Firmware Development,Embedded Software,12000
+Test Planning,Test & Compliance,8500
+RTOS Development,Embedded Software,3200
+PCB Design,Electronics,6500
+DSP,RF & Wireless,2100
+Device Drivers,Embedded Software,4800
+SystemVerilog,Silicon & SoC Design,3600
+FPGA Design,Silicon & SoC Design,4200`,
+
+  current: `skill_name,job_openings_current
+Microarchitecture,4600
+ASIC Design,2350
+Firmware Development,10200
+Test Planning,4100
+RTOS Development,3300
+PCB Design,3650
+DSP,2900
+Device Drivers,3750
+SystemVerilog,5200
+FPGA Design,4800`,
+
+  previous: `skill_name,job_openings_previous
+Microarchitecture,3800
+ASIC Design,2200
+Firmware Development,9500
+Test Planning,4200
+RTOS Development,2800
+PCB Design,3800
+DSP,2400
+Device Drivers,3600
+SystemVerilog,4100
+FPGA Design,4100`,
+};
+
+function loadSampleData() {
+  ['supply', 'current', 'previous'].forEach(k => {
+    document.getElementById('text-' + k).value = SAMPLE[k];
+    parseTextarea(k);
+  });
+}
+
+// ============================================================
+//   FILE UPLOAD HANDLERS
+// ============================================================
+function dragOver(e, key) { e.preventDefault(); document.getElementById('upload-' + key).classList.add('drag-over'); }
+function dragLeave(key)   { document.getElementById('upload-' + key).classList.remove('drag-over'); }
+
+function dropFile(e, key) {
+  e.preventDefault();
+  dragLeave(key);
+  const file = e.dataTransfer.files[0];
+  if (file) readFile(file, key);
+}
+
+function handleFile(e, key) {
+  const file = e.target.files[0];
+  if (file) readFile(file, key);
+}
+
+function readFile(file, key) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    document.getElementById('text-' + key).value = e.target.result;
+    parseTextarea(key);
+  };
+  reader.readAsText(file);
+}
+
+function parseTextarea(key) {
+  const text = document.getElementById('text-' + key).value.trim();
+  const errEl = document.getElementById('err-' + key);
+  const zone  = document.getElementById('upload-' + key);
+  const label = document.getElementById(key + '-label');
+
+  if (!text) {
+    store[key] = null;
+    zone.classList.remove('loaded');
+    errEl.classList.add('hidden');
+    label.textContent = 'Drop file or click to upload';
+    return;
+  }
+
+  try {
+    const rows = parseCSV(text);
+    if (!rows.length) throw new Error('No data rows found.');
+    store[key] = rows;
+    zone.classList.add('loaded');
+    errEl.classList.add('hidden');
+    label.textContent = `✓ ${rows.length} row${rows.length !== 1 ? 's' : ''} loaded`;
+  } catch (err) {
+    store[key] = null;
+    zone.classList.remove('loaded');
+    errEl.textContent = err.message;
+    errEl.classList.remove('hidden');
+    label.textContent = 'Drop file or click to upload';
+  }
+}
+
+// ============================================================
+//   CONFIG HELPERS
+// ============================================================
+function onPresetChange() {
+  const preset = document.getElementById('weight-preset').value;
+  document.getElementById('custom-weights-panel').classList.toggle('hidden', preset !== 'custom');
+}
+
+function onWeightSlider() {
+  const d = parseInt(document.getElementById('w-demand').value);
+  const s = 100 - d;
+  document.getElementById('w-supply').value = s;
+  document.getElementById('w-demand-val').textContent = (d / 100).toFixed(2);
+  document.getElementById('w-supply-val').textContent = (s / 100).toFixed(2);
+}
+
+function toggleAdvanced() {
+  const panel = document.getElementById('advanced-panel');
+  const icon  = document.getElementById('adv-icon');
+  panel.classList.toggle('open');
+  icon.textContent = panel.classList.contains('open') ? '▼' : '▶';
+}
+
+function getConfig() {
+  const preset = document.getElementById('weight-preset').value;
+  let wDemand, wSupply;
+  if (preset === 'balanced')           { wDemand = 0.5; wSupply = 0.5; }
+  else if (preset === 'demand_led')    { wDemand = 0.6; wSupply = 0.4; }
+  else if (preset === 'supply_constrained') { wDemand = 0.4; wSupply = 0.6; }
+  else {
+    wDemand = parseInt(document.getElementById('w-demand').value) / 100;
+    wSupply = 1 - wDemand;
+  }
+
+  return {
+    wDemand, wSupply,
+    scope: document.getElementById('scope').value,
+    includePartial: document.getElementById('include-partial').checked,
+    thresholds: {
+      sunrise:       parseFloat(document.getElementById('t-sunrise').value) || 75,
+      likely_sunrise: parseFloat(document.getElementById('t-likely-sunrise').value) || 55,
+      neutral:       parseFloat(document.getElementById('t-neutral').value) || 45,
+      likely_sunset: parseFloat(document.getElementById('t-likely-sunset').value) || 25,
+    },
+  };
+}
+
+// ============================================================
+//   CORE ALGORITHM
+// ============================================================
+function normalizeSkillName(name) {
+  if (!name) return null;
+  return name.toLowerCase().trim().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ');
+}
+
+function calcGrowthRate(curr, prev) {
+  if (!prev || prev === 0) return null;
+  return (curr - prev) / prev;
+}
+
+function calcSupplyPressure(pool, curr) {
+  if (!curr || curr === 0) return null;
+  return pool / curr;
+}
+
+/**
+ * Percentile ranks — uses average-rank method for ties.
+ * ascending=false → highest value gets rank 1 → highest percentile
+ * ascending=true  → lowest value gets rank 1 → highest percentile
+ */
+function percentileRanks(values, ascending) {
+  const n = values.length;
+  if (n === 0) return [];
+  const indexed = values.map((v, i) => ({ v, i }));
+  indexed.sort((a, b) => ascending ? a.v - b.v : b.v - a.v);
+
+  const ranks = new Array(n);
+  let i = 0;
+  while (i < n) {
+    let j = i;
+    while (j < n && indexed[j].v === indexed[i].v) j++;
+    const avgRank = (i + 1 + j) / 2;
+    for (let k = i; k < j; k++) ranks[indexed[k].i] = avgRank;
+    i = j;
+  }
+  return ranks.map(r => Math.round(((n - r + 1) / n) * 1000) / 10);
+}
+
+function classifySkill(score, t) {
+  if (score >= t.sunrise)        return { cls: 'Sunrise',              code: 'SR'  };
+  if (score >= t.likely_sunrise) return { cls: 'Likely Sunrise',       code: 'LS'  };
+  if (score >= t.neutral)        return { cls: 'Neutral/Transitional', code: 'NT'  };
+  if (score >= t.likely_sunset)  return { cls: 'Likely Sunset',        code: 'LSS' };
+  return                                 { cls: 'Sunset',              code: 'SS'  };
+}
+
+function assignConfidence(growthRate, supplyIdx, prev, curr, pool, partial) {
+  if (partial) return 'Low';
+  if (!curr || curr === 0 || !pool || pool === 0 || !prev || prev === 0) return 'Low';
+  if (growthRate === null || supplyIdx === null) return 'Low';
+  if (prev < 10) return 'Medium';
+  return 'High';
+}
+
+function runCore(supplyData, currentData, previousData, cfg) {
+  // Normalize
+  const withNorm = (rows) => rows.map(r => ({ ...r, _norm: normalizeSkillName(r.skill_name) }));
+  const supply  = withNorm(supplyData);
+  const current = withNorm(currentData);
+  const previous = withNorm(previousData);
+
+  const sSet = new Set(supply.filter(r => r._norm).map(r => r._norm));
+  const cSet = new Set(current.filter(r => r._norm).map(r => r._norm));
+  const pSet = new Set(previous.filter(r => r._norm).map(r => r._norm));
+
+  const common  = new Set([...sSet].filter(n => cSet.has(n) && pSet.has(n)));
+
+  // Reconciliation
+  const allUnique = new Set([...sSet, ...cSet, ...pSet]);
+  const recon = {
+    supply_total: sSet.size,
+    demand_current_total: cSet.size,
+    demand_previous_total: pSet.size,
+    common_count: common.size,
+    total_unique: allUnique.size,
+    match_rate: allUnique.size > 0 ? Math.round(common.size / allUnique.size * 1000) / 10 : 0,
+    supply_only: [...sSet].filter(n => !cSet.has(n) && !pSet.has(n)).sort(),
+    current_only: [...cSet].filter(n => !sSet.has(n) && !pSet.has(n)).sort(),
+    previous_only: [...pSet].filter(n => !sSet.has(n) && !cSet.has(n)).sort(),
+    supply_and_current: [...sSet].filter(n => cSet.has(n) && !pSet.has(n)).sort(),
+    supply_and_previous: [...sSet].filter(n => pSet.has(n) && !cSet.has(n)).sort(),
+    current_and_previous: [...cSet].filter(n => pSet.has(n) && !sSet.has(n)).sort(),
+  };
+
+  if (common.size === 0) throw new Error('E007 — No common skills found across all three tables. Check that skill names overlap.');
+
+  // Build lookup maps
+  const sMap  = {}; supply.forEach(r  => { if (r._norm) sMap[r._norm]  = r; });
+  const cMap  = {}; current.forEach(r => { if (r._norm) cMap[r._norm]  = r; });
+  const pMap  = {}; previous.forEach(r=> { if (r._norm) pMap[r._norm]  = r; });
+
+  // Merge common skills
+  let merged = [];
+  common.forEach(norm => {
+    const s = sMap[norm], c = cMap[norm], p = pMap[norm];
+    merged.push({
+      skill_name:          s.skill_name,
+      sub_family:          s.sub_family || null,
+      talent_pool_size:    +s.talent_pool_size || 0,
+      demand_current_year: +c.job_openings_current || 0,
+      demand_previous_year:+p.job_openings_previous || 0,
+      _norm: norm,
+      _partial: null,
+    });
+  });
+
+  // Optional partial matches
+  if (cfg.includePartial) {
+    const supplyAndCurrent  = [...sSet].filter(n => cSet.has(n) && !pSet.has(n));
+    const supplyAndPrevious = [...sSet].filter(n => pSet.has(n) && !cSet.has(n));
+    const currentAndPrevious= [...cSet].filter(n => pSet.has(n) && !sSet.has(n));
+
+    supplyAndCurrent.forEach(norm => {
+      const s = sMap[norm], c = cMap[norm];
+      merged.push({ skill_name: s.skill_name, sub_family: s.sub_family||null, talent_pool_size: +s.talent_pool_size||0, demand_current_year: +c.job_openings_current||0, demand_previous_year: 0, _norm: norm, _partial: 'New Skill' });
+    });
+    supplyAndPrevious.forEach(norm => {
+      const s = sMap[norm], p = pMap[norm];
+      merged.push({ skill_name: s.skill_name, sub_family: s.sub_family||null, talent_pool_size: +s.talent_pool_size||0, demand_current_year: 0, demand_previous_year: +p.job_openings_previous||0, _norm: norm, _partial: 'Potentially Sunset' });
+    });
+    currentAndPrevious.forEach(norm => {
+      const c = cMap[norm], p = pMap[norm];
+      merged.push({ skill_name: c.skill_name, sub_family: null, talent_pool_size: 0, demand_current_year: +c.job_openings_current||0, demand_previous_year: +p.job_openings_previous||0, _norm: norm, _partial: 'Emerging - No Talent Pool' });
+    });
+  }
+
+  // Calculate raw metrics
+  merged.forEach(sk => {
+    sk.demand_growth_rate   = calcGrowthRate(sk.demand_current_year, sk.demand_previous_year);
+    sk.supply_pressure_index = calcSupplyPressure(sk.talent_pool_size, sk.demand_current_year);
+  });
+
+  // Single-skill edge case
+  if (merged.length === 1) {
+    const sk = merged[0];
+    sk.demand_growth_percentile  = 50;
+    sk.supply_pressure_percentile = 50;
+    sk.sunrise_score = 50;
+    const { cls, code } = classifySkill(50, cfg.thresholds);
+    sk.classification = cls; sk.classification_code = code;
+    sk.confidence = 'Low';
+    return { recon, results: merged };
+  }
+
+  // Percentile scope
+  const groups = {};
+  if (cfg.scope === 'sub_family') {
+    merged.forEach(sk => {
+      const key = sk.sub_family || 'Unspecified';
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(sk);
+    });
+  } else {
+    groups['global'] = merged;
+  }
+
+  Object.values(groups).forEach(group => {
+    const gVals = group.map(sk => sk.demand_growth_rate !== null ? sk.demand_growth_rate : -Infinity);
+    const sVals = group.map(sk => sk.supply_pressure_index !== null ? sk.supply_pressure_index : Infinity);
+    const gPctls = percentileRanks(gVals, false);
+    const sPctls = percentileRanks(sVals, true);
+    group.forEach((sk, idx) => {
+      sk.demand_growth_percentile   = gPctls[idx];
+      sk.supply_pressure_percentile = sPctls[idx];
+    });
+  });
+
+  // Final scores and classification
+  merged.forEach(sk => {
+    sk.sunrise_score = Math.round((sk.demand_growth_percentile * cfg.wDemand + sk.supply_pressure_percentile * cfg.wSupply) * 10) / 10;
+    const { cls, code } = classifySkill(sk.sunrise_score, cfg.thresholds);
+    sk.classification = cls;
+    sk.classification_code = code;
+    sk.confidence = assignConfidence(sk.demand_growth_rate, sk.supply_pressure_index, sk.demand_previous_year, sk.demand_current_year, sk.talent_pool_size, sk._partial);
+  });
+
+  return { recon, results: merged };
+}
+
+// Sensitivity analysis with 3 weight combos
+function runSensitivity(results, thresholds) {
+  const combos = [
+    { label: 'Demand-Led (60/40)',      wD: 0.6, wS: 0.4 },
+    { label: 'Balanced (50/50)',        wD: 0.5, wS: 0.5 },
+    { label: 'Supply-Constrained (40/60)', wD: 0.4, wS: 0.6 },
+  ];
+  return results.map(sk => {
+    const runs = combos.map(c => {
+      const score = Math.round((sk.demand_growth_percentile * c.wD + sk.supply_pressure_percentile * c.wS) * 10) / 10;
+      const { cls } = classifySkill(score, thresholds);
+      return { label: c.label, score, cls };
+    });
+    const clsSet = new Set(runs.map(r => r.cls));
+    return { skill_name: sk.skill_name, classification_code: sk.classification_code, runs, stable: clsSet.size === 1 };
+  });
+}
+
+// ============================================================
+//   UI: RUN ANALYSIS
+// ============================================================
+function runAnalysisUI() {
+  const errEl = document.getElementById('run-error');
+  errEl.classList.add('hidden');
+
+  if (!store.supply || !store.current || !store.previous) {
+    errEl.textContent = 'Please upload or paste data for all three tables.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  const cfg = getConfig();
+  let analysisResult;
+  try {
+    analysisResult = runCore(store.supply, store.current, store.previous, cfg);
+  } catch (e) {
+    errEl.textContent = e.message;
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  store.results = analysisResult.results;
+  store.recon   = analysisResult.recon;
+  store.cfg     = cfg;
+  store.sortCol = 'sunrise_score';
+  store.sortDir = 'desc';
+
+  renderAll();
+  document.getElementById('results-section').classList.remove('hidden');
+  document.getElementById('results-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ============================================================
+//   RENDERING
+// ============================================================
+const CLS_COLOR = {
+  'SR':  '#10b981', 'Sunrise':              '#10b981',
+  'LS':  '#84cc16', 'Likely Sunrise':       '#84cc16',
+  'NT':  '#60a5fa', 'Neutral/Transitional': '#60a5fa',
+  'LSS': '#f59e0b', 'Likely Sunset':        '#f59e0b',
+  'SS':  '#ef4444', 'Sunset':               '#ef4444',
+};
+
+function clsBadge(code) {
+  return `<span class="badge-${code} inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold">${codeFull(code)}</span>`;
+}
+function codeFull(code) {
+  return { SR:'Sunrise', LS:'Likely Sunrise', NT:'Neutral', LSS:'Likely Sunset', SS:'Sunset' }[code] || code;
+}
+function confBadge(conf) {
+  return `<span class="badge-${conf} inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold">${conf}</span>`;
+}
+function fmtPct(v)  { return v === null || v === undefined ? '—' : (v * 100).toFixed(1) + '%'; }
+function fmtNum(v)  { return v === null || v === undefined ? '—' : Number(v).toLocaleString(); }
+function fmtFloat(v){ return v === null || v === undefined ? '—' : v.toFixed(3); }
+
+function renderAll() {
+  renderSummaryCards();
+  renderClassBar();
+  applyFilters();
+  renderRecon();
+  renderCharts();
+  renderSensitivity();
+  setupTableSort();
+}
+
+function renderSummaryCards() {
+  const results = store.results;
+  const total = results.length;
+  const dist = { SR:0, LS:0, NT:0, LSS:0, SS:0 };
+  results.forEach(r => dist[r.classification_code]++);
+  const avgScore = total ? (results.reduce((a, r) => a + r.sunrise_score, 0) / total).toFixed(1) : 0;
+  const highConf = results.filter(r => r.confidence === 'High').length;
+
+  const cards = [
+    { label: 'Skills Analyzed', value: total, icon: '📊', color: 'bg-blue-50 border-blue-200' },
+    { label: 'Sunrise Skills', value: `${dist.SR + dist.LS}`, sub: `${dist.SR} confirmed + ${dist.LS} likely`, icon: '🌅', color: 'bg-green-50 border-green-200' },
+    { label: 'Avg Sunrise Score', value: avgScore, sub: 'out of 100', icon: '⭐', color: 'bg-amber-50 border-amber-200' },
+    { label: 'High Confidence', value: `${total ? Math.round(highConf/total*100) : 0}%`, sub: `${highConf} of ${total} skills`, icon: '✓', color: 'bg-purple-50 border-purple-200' },
+  ];
+
+  document.getElementById('summary-cards').innerHTML = cards.map(c => `
+    <div class="${c.color} border rounded-xl p-4 flex items-start gap-3">
+      <span class="text-2xl">${c.icon}</span>
+      <div>
+        <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">${c.label}</p>
+        <p class="text-2xl font-bold text-gray-800 mt-0.5">${c.value}</p>
+        ${c.sub ? `<p class="text-xs text-gray-500 mt-0.5">${c.sub}</p>` : ''}
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderClassBar() {
+  const results = store.results;
+  const total = results.length;
+  if (!total) return;
+
+  const order = ['SR','LS','NT','LSS','SS'];
+  const labels = { SR:'Sunrise', LS:'Likely Sunrise', NT:'Neutral', LSS:'Likely Sunset', SS:'Sunset' };
+  const dist = { SR:0, LS:0, NT:0, LSS:0, SS:0 };
+  results.forEach(r => dist[r.classification_code]++);
+
+  const bar = document.getElementById('class-bar');
+  const legend = document.getElementById('class-legend');
+
+  bar.innerHTML = order.map(code => {
+    const pct = (dist[code] / total * 100).toFixed(1);
+    if (dist[code] === 0) return '';
+    return `<div style="width:${pct}%;background:${CLS_COLOR[code]}" class="flex items-center justify-center text-white overflow-hidden" title="${labels[code]}: ${dist[code]} (${pct}%)">
+      ${pct >= 8 ? `<span class="text-xs font-semibold">${dist[code]}</span>` : ''}
+    </div>`;
+  }).join('');
+
+  legend.innerHTML = order.filter(code => dist[code] > 0).map(code => `
+    <div class="flex items-center gap-1.5">
+      <span class="w-3 h-3 rounded-full inline-block" style="background:${CLS_COLOR[code]}"></span>
+      <span class="text-gray-600">${labels[code]}: <strong>${dist[code]}</strong></span>
+    </div>
+  `).join('');
+}
+
+// ---- Table ----
+let filteredResults = [];
+
+function applyFilters() {
+  const search  = document.getElementById('search-input').value.toLowerCase();
+  const fClass  = document.getElementById('filter-class').value;
+  const fConf   = document.getElementById('filter-confidence').value;
+
+  filteredResults = (store.results || []).filter(r => {
+    if (search  && !r.skill_name.toLowerCase().includes(search))  return false;
+    if (fClass  && r.classification !== fClass)  return false;
+    if (fConf   && r.confidence !== fConf)        return false;
+    return true;
+  });
+
+  sortResults();
+  renderTable();
+}
+
+function sortResults() {
+  const col = store.sortCol, dir = store.sortDir;
+  filteredResults.sort((a, b) => {
+    let av = a[col], bv = b[col];
+    if (av === null || av === undefined) av = dir === 'asc' ? Infinity : -Infinity;
+    if (bv === null || bv === undefined) bv = dir === 'asc' ? Infinity : -Infinity;
+    if (typeof av === 'string') av = av.toLowerCase();
+    if (typeof bv === 'string') bv = bv.toLowerCase();
+    if (av < bv) return dir === 'asc' ? -1 : 1;
+    if (av > bv) return dir === 'asc' ? 1 : -1;
+    return 0;
+  });
+}
+
+function renderTable() {
+  const tbody = document.getElementById('results-tbody');
+  document.getElementById('row-count').textContent = `Showing ${filteredResults.length} of ${store.results.length} skills`;
+
+  tbody.innerHTML = filteredResults.map(r => {
+    const scorePct = r.sunrise_score;
+    const scoreBar = `<div class="flex items-center gap-2">
+      <span class="font-bold text-sm w-8 text-right">${scorePct.toFixed(1)}</span>
+      <div class="score-bar-track flex-1 min-w-16 relative">
+        <div class="score-bar-thumb" style="left:${scorePct}%"></div>
+      </div>
+    </div>`;
+
+    const growthFmt = r.demand_growth_rate !== null
+      ? `<span class="${r.demand_growth_rate >= 0 ? 'text-green-600' : 'text-red-600'} font-medium">${fmtPct(r.demand_growth_rate)}</span>`
+      : '<span class="text-gray-400">—</span>';
+
+    const partial = r._partial ? `<br><span class="text-xs text-gray-400">${r._partial}</span>` : '';
+
+    return `<tr>
+      <td class="font-medium text-gray-800">${r.skill_name}${partial}</td>
+      <td class="text-gray-500">${r.sub_family || '—'}</td>
+      <td class="text-right">${fmtNum(r.talent_pool_size)}</td>
+      <td class="text-right">${fmtNum(r.demand_previous_year)}</td>
+      <td class="text-right">${fmtNum(r.demand_current_year)}</td>
+      <td class="text-right">${growthFmt}</td>
+      <td class="text-right">${r.supply_pressure_index !== null ? r.supply_pressure_index.toFixed(2) : '—'}</td>
+      <td class="text-right">${r.demand_growth_percentile.toFixed(1)}</td>
+      <td class="text-right">${r.supply_pressure_percentile.toFixed(1)}</td>
+      <td>${scoreBar}</td>
+      <td>${clsBadge(r.classification_code)}</td>
+      <td>${confBadge(r.confidence)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function setupTableSort() {
+  document.querySelectorAll('#results-table th[data-sort]').forEach(th => {
+    th.onclick = () => {
+      const col = th.getAttribute('data-sort');
+      if (store.sortCol === col) store.sortDir = store.sortDir === 'asc' ? 'desc' : 'asc';
+      else { store.sortCol = col; store.sortDir = 'desc'; }
+      document.querySelectorAll('#results-table th').forEach(t => t.classList.remove('sort-asc','sort-desc'));
+      th.classList.add('sort-' + store.sortDir);
+      sortResults();
+      renderTable();
+    };
+  });
+  // Set initial sort indicator
+  const initTh = document.querySelector(`#results-table th[data-sort="sunrise_score"]`);
+  if (initTh) initTh.classList.add('sort-desc');
+}
+
+// ---- Reconciliation ----
+function renderRecon() {
+  const r = store.recon;
+  const matchColor = r.match_rate >= 80 ? 'text-green-600' : r.match_rate >= 50 ? 'text-amber-600' : 'text-red-600';
+
+  const renderList = (label, arr) => {
+    if (!arr.length) return '';
+    return `<div class="mt-3">
+      <p class="text-xs font-semibold text-gray-600 mb-1">${label} (${arr.length})</p>
+      <div class="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
+        ${arr.map(s => `<span class="bg-gray-100 text-gray-600 text-xs px-2 py-0.5 rounded">${s}</span>`).join('')}
+      </div>
+    </div>`;
+  };
+
+  document.getElementById('recon-content').innerHTML = `
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      ${[
+        { label: 'Supply Skills',          value: r.supply_total },
+        { label: 'Current Demand Skills',  value: r.demand_current_total },
+        { label: 'Previous Demand Skills', value: r.demand_previous_total },
+        { label: 'Common (Matched)',       value: r.common_count },
+      ].map(c => `<div class="bg-gray-50 rounded-lg p-4 text-center border border-gray-200">
+        <p class="text-xs text-gray-500 mb-1">${c.label}</p>
+        <p class="text-2xl font-bold text-gray-800">${c.value}</p>
+      </div>`).join('')}
+    </div>
+
+    <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-5 flex items-center gap-4">
+      <div class="text-4xl font-black ${matchColor}">${r.match_rate}%</div>
+      <div>
+        <p class="font-semibold text-gray-700">Match Rate</p>
+        <p class="text-sm text-gray-500">${r.common_count} of ${r.total_unique} unique skills matched across all three tables</p>
+        ${r.match_rate < 50 ? '<p class="text-xs text-red-600 mt-1">⚠ W005 — Low match rate. Check for skill name inconsistencies across tables.</p>' : ''}
+      </div>
+    </div>
+
+    <div class="space-y-1">
+      ${renderList('Supply only (not in demand tables)', r.supply_only)}
+      ${renderList('Demand Current only', r.current_only)}
+      ${renderList('Demand Previous only', r.previous_only)}
+      ${renderList('Supply + Current (missing previous year)', r.supply_and_current)}
+      ${renderList('Supply + Previous (missing current year)', r.supply_and_previous)}
+      ${renderList('Current + Previous (missing supply)', r.current_and_previous)}
+    </div>
+  `;
+}
+
+// ---- Charts ----
+function destroyChart(key) {
+  if (store.charts[key]) { store.charts[key].destroy(); delete store.charts[key]; }
+}
+
+function renderCharts() {
+  const results = store.results;
+
+  // Donut
+  destroyChart('donut');
+  const order = ['SR','LS','NT','LSS','SS'];
+  const labels = { SR:'Sunrise', LS:'Likely Sunrise', NT:'Neutral/Transitional', LSS:'Likely Sunset', SS:'Sunset' };
+  const dist = { SR:0, LS:0, NT:0, LSS:0, SS:0 };
+  results.forEach(r => dist[r.classification_code]++);
+  const donutLabels  = order.filter(k => dist[k] > 0).map(k => labels[k]);
+  const donutData    = order.filter(k => dist[k] > 0).map(k => dist[k]);
+  const donutColors  = order.filter(k => dist[k] > 0).map(k => CLS_COLOR[k]);
+
+  store.charts.donut = new Chart(document.getElementById('chart-donut'), {
+    type: 'doughnut',
+    data: { labels: donutLabels, datasets: [{ data: donutData, backgroundColor: donutColors, borderWidth: 2 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { font: { size: 11 } } } } },
+  });
+
+  // Bar — top 15 by sunrise score
+  destroyChart('bar');
+  const top15 = [...results].sort((a, b) => b.sunrise_score - a.sunrise_score).slice(0, 15);
+  store.charts.bar = new Chart(document.getElementById('chart-bar'), {
+    type: 'bar',
+    data: {
+      labels: top15.map(r => r.skill_name.length > 18 ? r.skill_name.slice(0,16) + '…' : r.skill_name),
+      datasets: [{ data: top15.map(r => r.sunrise_score), backgroundColor: top15.map(r => CLS_COLOR[r.classification_code]), borderRadius: 4 }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { min: 0, max: 100, title: { display: true, text: 'Sunrise Score', font: { size: 10 } } },
+        y: { ticks: { font: { size: 10 } } },
+      },
+    },
+  });
+
+  // Scatter
+  destroyChart('scatter');
+  const scatterData = results.map(r => ({
+    x: r.demand_growth_percentile,
+    y: r.supply_pressure_percentile,
+    label: r.skill_name,
+    code: r.classification_code,
+  }));
+
+  // Group by classification
+  const scatterDatasets = order.map(code => ({
+    label: labels[code],
+    data: scatterData.filter(d => d.code === code).map(d => ({ x: d.x, y: d.y, label: d.label })),
+    backgroundColor: CLS_COLOR[code] + 'cc',
+    pointRadius: 6,
+    pointHoverRadius: 8,
+  })).filter(ds => ds.data.length > 0);
+
+  store.charts.scatter = new Chart(document.getElementById('chart-scatter'), {
+    type: 'scatter',
+    data: { datasets: scatterDatasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'top', labels: { font: { size: 10 }, boxWidth: 12 } },
+        tooltip: { callbacks: { label: (ctx) => `${ctx.raw.label} (${ctx.parsed.x.toFixed(1)}, ${ctx.parsed.y.toFixed(1)})` } },
+      },
+      scales: {
+        x: { min: 0, max: 100, title: { display: true, text: 'Demand Growth Percentile →', font: { size: 11 } }, grid: { color: '#f3f4f6' } },
+        y: { min: 0, max: 100, title: { display: true, text: '← Supply Pressure Percentile (high = scarce) →', font: { size: 11 } }, grid: { color: '#f3f4f6' } },
+      },
+    },
+  });
+}
+
+// ---- Sensitivity ----
+function renderSensitivity() {
+  const senData = runSensitivity(store.results, store.cfg.thresholds);
+  const clsToCode = { 'Sunrise':'SR', 'Likely Sunrise':'LS', 'Neutral/Transitional':'NT', 'Likely Sunset':'LSS', 'Sunset':'SS' };
+  const unstableCount = senData.filter(s => !s.stable).length;
+
+  document.getElementById('sensitivity-content').innerHTML = `
+    <div class="mb-5 p-4 rounded-lg ${unstableCount === 0 ? 'bg-green-50 border border-green-200' : 'bg-amber-50 border border-amber-200'}">
+      ${unstableCount === 0
+        ? `<p class="font-semibold text-green-700">✓ All ${senData.length} skills are stable across weight configurations.</p>
+           <p class="text-sm text-green-600 mt-1">Classification does not change with balanced, demand-led, or supply-constrained weights.</p>`
+        : `<p class="font-semibold text-amber-700">⚠ ${unstableCount} of ${senData.length} skills change classification with different weight configurations.</p>
+           <p class="text-sm text-amber-600 mt-1">These skills sit near classification thresholds and are weight-sensitive.</p>`}
+    </div>
+
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>Skill</th>
+            <th>Stability</th>
+            <th>Demand-Led (60/40)</th>
+            <th>Balanced (50/50)</th>
+            <th>Supply-Constrained (40/60)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${[...senData].sort((a, b) => (a.stable === b.stable ? 0 : a.stable ? 1 : -1)).map(s => `
+            <tr>
+              <td class="font-medium">${s.skill_name}</td>
+              <td>${s.stable
+                ? '<span class="text-xs font-semibold text-green-600 bg-green-50 px-2 py-0.5 rounded">Stable</span>'
+                : '<span class="text-xs font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded">Sensitive</span>'}</td>
+              ${s.runs.map(r => {
+                const code = clsToCode[r.cls] || 'NT';
+                return `<td>${clsBadge(code)} <span class="text-xs text-gray-500">${r.score}</span></td>`;
+              }).join('')}
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+// ============================================================
+//   TABS
+// ============================================================
+function switchTab(id) {
+  document.querySelectorAll('.tab-btn').forEach((btn, idx) => {
+    const ids = ['results','recon','charts','sensitivity'];
+    btn.classList.toggle('active', ids[idx] === id);
+  });
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.getElementById('tab-' + id).classList.add('active');
+
+  // Re-render charts on tab show (needed for Chart.js sizing)
+  if (id === 'charts') {
+    setTimeout(() => {
+      Object.values(store.charts).forEach(c => c.resize && c.resize());
+    }, 50);
+  }
+}
+
+// ============================================================
+//   EXPORT
+// ============================================================
+function exportCSV() {
+  if (!store.results) return;
+  const headers = ['skill_name','sub_family','talent_pool_size','demand_previous_year','demand_current_year','demand_growth_rate','supply_pressure_index','demand_growth_percentile','supply_pressure_percentile','sunrise_score','classification','classification_code','confidence'];
+  const rows = store.results.map(r => headers.map(h => {
+    const v = r[h];
+    if (v === null || v === undefined) return '';
+    const s = String(v);
+    return s.includes(',') || s.includes('"') ? `"${s.replace(/"/g,'""')}"` : s;
+  }).join(','));
+  download([headers.join(','), ...rows].join('\n'), 'sunrise_sunset_results.csv', 'text/csv');
+}
+
+function exportJSON() {
+  if (!store.results) return;
+  const output = {
+    metadata: { exported_at: new Date().toISOString(), version: '1.0.0', total_skills: store.results.length },
+    reconciliation: store.recon,
+    results: store.results.map(r => {
+      const { _norm, _partial, ...clean } = r;
+      if (_partial) clean.partial_match_flag = _partial;
+      return clean;
+    }),
+  };
+  download(JSON.stringify(output, null, 2), 'sunrise_sunset_results.json', 'application/json');
+}
+
+function download(content, filename, mime) {
+  const blob = new Blob([content], { type: mime });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+</script>
+
+</body>
+</html>
