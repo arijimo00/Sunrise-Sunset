@@ -164,12 +164,13 @@
         </select>
       </div>
 
-      <!-- Include Partial Matches -->
+      <!-- Include Supply-linked Partial Matches -->
       <div class="flex items-start gap-3 pt-6">
         <input type="checkbox" id="include-partial" class="mt-0.5 h-4 w-4 accent-amber-500">
         <div>
-          <label for="include-partial" class="text-sm font-medium text-gray-700">Include Partial Matches</label>
-          <p class="text-xs text-gray-500 mt-0.5">Skills in 2 of 3 tables (Low confidence)</p>
+          <label for="include-partial" class="text-sm font-medium text-gray-700">Include Supply+Current / Supply+Previous</label>
+          <p class="text-xs text-gray-500 mt-0.5">Supply-linked pairs (no proxy available, Low confidence)</p>
+          <p class="text-xs text-amber-600 mt-0.5">Note: Demand-only & Current+Previous buckets are always included with proxy values.</p>
         </div>
       </div>
     </div>
@@ -290,6 +291,7 @@
           </table>
         </div>
         <p class="text-xs text-gray-400 mt-2" id="row-count"></p>
+        <p class="text-xs text-amber-600 mt-1"><sup>*</sup> Amber values are proxies = 80% of the minimum from the source table (Low confidence). See Reconciliation tab for details.</p>
       </div>
 
       <!-- Tab: Reconciliation -->
@@ -639,7 +641,20 @@ function runCore(supplyData, currentData, previousData, cfg) {
   const cMap  = {}; current.forEach(r => { if (r._norm) cMap[r._norm]  = r; });
   const pMap  = {}; previous.forEach(r=> { if (r._norm) pMap[r._norm]  = r; });
 
-  // Merge common skills
+  // Compute 80%-of-minimum proxy values from each input table (positive values only)
+  const minOf = (arr) => { const v = arr.filter(x => x > 0); return v.length ? Math.min(...v) : 0; };
+  const minSupplyPool     = minOf(supply.map(r   => +r.talent_pool_size      || 0));
+  const minCurrentDemand  = minOf(current.map(r  => +r.job_openings_current  || 0));
+  const minPreviousDemand = minOf(previous.map(r => +r.job_openings_previous || 0));
+  const proxySupply   = Math.round(0.8 * minSupplyPool);
+  const proxyCurrent  = Math.round(0.8 * minCurrentDemand);
+  const proxyPrevious = Math.round(0.8 * minPreviousDemand);
+
+  // Attach proxy metadata to recon for display
+  recon.proxies = { supply: proxySupply, current: proxyCurrent, previous: proxyPrevious,
+                    min_supply: minSupplyPool, min_current: minCurrentDemand, min_previous: minPreviousDemand };
+
+  // Merge common (fully matched) skills
   let merged = [];
   common.forEach(norm => {
     const s = sMap[norm], c = cMap[norm], p = pMap[norm];
@@ -651,26 +666,68 @@ function runCore(supplyData, currentData, previousData, cfg) {
       demand_previous_year:+p.job_openings_previous || 0,
       _norm: norm,
       _partial: null,
+      _proxy_fields: [],
     });
   });
 
-  // Optional partial matches
+  // --- Always include proxy buckets (per specification) ---
+
+  // Bucket 1: Demand Current only → proxy supply pool + proxy previous demand (80% of min current demand)
+  const currentOnly = [...cSet].filter(n => !sSet.has(n) && !pSet.has(n));
+  currentOnly.forEach(norm => {
+    const c = cMap[norm];
+    merged.push({
+      skill_name: c.skill_name, sub_family: null,
+      talent_pool_size:     proxySupply,
+      demand_current_year:  +c.job_openings_current || 0,
+      demand_previous_year: proxyCurrent,
+      _norm: norm,
+      _partial: 'Demand Current only',
+      _proxy_fields: ['talent_pool_size', 'demand_previous_year'],
+    });
+  });
+
+  // Bucket 2: Demand Previous only → proxy supply pool + proxy current demand (80% of min previous demand)
+  const previousOnly = [...pSet].filter(n => !sSet.has(n) && !cSet.has(n));
+  previousOnly.forEach(norm => {
+    const p = pMap[norm];
+    merged.push({
+      skill_name: p.skill_name, sub_family: null,
+      talent_pool_size:     proxySupply,
+      demand_current_year:  proxyPrevious,
+      demand_previous_year: +p.job_openings_previous || 0,
+      _norm: norm,
+      _partial: 'Demand Previous only',
+      _proxy_fields: ['talent_pool_size', 'demand_current_year'],
+    });
+  });
+
+  // Bucket 3: Current + Previous only → proxy supply pool only
+  const currentAndPrevious = [...cSet].filter(n => pSet.has(n) && !sSet.has(n));
+  currentAndPrevious.forEach(norm => {
+    const c = cMap[norm], p = pMap[norm];
+    merged.push({
+      skill_name: c.skill_name, sub_family: null,
+      talent_pool_size:     proxySupply,
+      demand_current_year:  +c.job_openings_current || 0,
+      demand_previous_year: +p.job_openings_previous || 0,
+      _norm: norm,
+      _partial: 'Current + Previous (proxy supply)',
+      _proxy_fields: ['talent_pool_size'],
+    });
+  });
+
+  // Optional: Supply+Current and Supply+Previous (flagged, no proxy — toggle-controlled)
   if (cfg.includePartial) {
     const supplyAndCurrent  = [...sSet].filter(n => cSet.has(n) && !pSet.has(n));
     const supplyAndPrevious = [...sSet].filter(n => pSet.has(n) && !cSet.has(n));
-    const currentAndPrevious= [...cSet].filter(n => pSet.has(n) && !sSet.has(n));
-
     supplyAndCurrent.forEach(norm => {
       const s = sMap[norm], c = cMap[norm];
-      merged.push({ skill_name: s.skill_name, sub_family: s.sub_family||null, talent_pool_size: +s.talent_pool_size||0, demand_current_year: +c.job_openings_current||0, demand_previous_year: 0, _norm: norm, _partial: 'New Skill' });
+      merged.push({ skill_name: s.skill_name, sub_family: s.sub_family||null, talent_pool_size: +s.talent_pool_size||0, demand_current_year: +c.job_openings_current||0, demand_previous_year: 0, _norm: norm, _partial: 'New Skill (Supply+Current)', _proxy_fields: [] });
     });
     supplyAndPrevious.forEach(norm => {
       const s = sMap[norm], p = pMap[norm];
-      merged.push({ skill_name: s.skill_name, sub_family: s.sub_family||null, talent_pool_size: +s.talent_pool_size||0, demand_current_year: 0, demand_previous_year: +p.job_openings_previous||0, _norm: norm, _partial: 'Potentially Sunset' });
-    });
-    currentAndPrevious.forEach(norm => {
-      const c = cMap[norm], p = pMap[norm];
-      merged.push({ skill_name: c.skill_name, sub_family: null, talent_pool_size: 0, demand_current_year: +c.job_openings_current||0, demand_previous_year: +p.job_openings_previous||0, _norm: norm, _partial: 'Emerging - No Talent Pool' });
+      merged.push({ skill_name: s.skill_name, sub_family: s.sub_family||null, talent_pool_size: +s.talent_pool_size||0, demand_current_year: 0, demand_previous_year: +p.job_openings_previous||0, _norm: norm, _partial: 'Potentially Sunset (Supply+Previous)', _proxy_fields: [] });
     });
   }
 
@@ -904,7 +961,19 @@ function sortResults() {
 
 function renderTable() {
   const tbody = document.getElementById('results-tbody');
-  document.getElementById('row-count').textContent = `Showing ${filteredResults.length} of ${store.results.length} skills`;
+  const total = store.results.length;
+  const proxyCount = store.results.filter(r => r._proxy_fields && r._proxy_fields.length > 0).length;
+  document.getElementById('row-count').textContent =
+    `Showing ${filteredResults.length} of ${total} skills` +
+    (proxyCount > 0 ? ` · ${proxyCount} with proxy values (*)` : '');
+
+  // Helper: wrap value with proxy asterisk if the field was proxied
+  const pv = (r, field, display) => {
+    if (r._proxy_fields && r._proxy_fields.includes(field)) {
+      return `<span class="text-amber-600 font-medium" title="Proxy: 80% of minimum from source table">${display} <sup>*</sup></span>`;
+    }
+    return display;
+  };
 
   tbody.innerHTML = filteredResults.map(r => {
     const scorePct = r.sunrise_score;
@@ -919,14 +988,16 @@ function renderTable() {
       ? `<span class="${r.demand_growth_rate >= 0 ? 'text-green-600' : 'text-red-600'} font-medium">${fmtPct(r.demand_growth_rate)}</span>`
       : '<span class="text-gray-400">—</span>';
 
-    const partial = r._partial ? `<br><span class="text-xs text-gray-400">${r._partial}</span>` : '';
+    const partial = r._partial
+      ? `<br><span class="text-xs ${r._proxy_fields && r._proxy_fields.length ? 'text-amber-600' : 'text-gray-400'}">${r._partial}</span>`
+      : '';
 
     return `<tr>
       <td class="font-medium text-gray-800">${r.skill_name}${partial}</td>
       <td class="text-gray-500">${r.sub_family || '—'}</td>
-      <td class="text-right">${fmtNum(r.talent_pool_size)}</td>
-      <td class="text-right">${fmtNum(r.demand_previous_year)}</td>
-      <td class="text-right">${fmtNum(r.demand_current_year)}</td>
+      <td class="text-right">${pv(r, 'talent_pool_size', fmtNum(r.talent_pool_size))}</td>
+      <td class="text-right">${pv(r, 'demand_previous_year', fmtNum(r.demand_previous_year))}</td>
+      <td class="text-right">${pv(r, 'demand_current_year', fmtNum(r.demand_current_year))}</td>
       <td class="text-right">${growthFmt}</td>
       <td class="text-right">${r.supply_pressure_index !== null ? r.supply_pressure_index.toFixed(2) : '—'}</td>
       <td class="text-right">${r.demand_growth_percentile.toFixed(1)}</td>
@@ -958,17 +1029,27 @@ function setupTableSort() {
 // ---- Reconciliation ----
 function renderRecon() {
   const r = store.recon;
+  const px = r.proxies || {};
   const matchColor = r.match_rate >= 80 ? 'text-green-600' : r.match_rate >= 50 ? 'text-amber-600' : 'text-red-600';
 
-  const renderList = (label, arr) => {
+  const renderList = (label, arr, style = '') => {
     if (!arr.length) return '';
     return `<div class="mt-3">
-      <p class="text-xs font-semibold text-gray-600 mb-1">${label} (${arr.length})</p>
+      <p class="text-xs font-semibold ${style || 'text-gray-600'} mb-1">${label} (${arr.length})</p>
       <div class="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
-        ${arr.map(s => `<span class="bg-gray-100 text-gray-600 text-xs px-2 py-0.5 rounded">${s}</span>`).join('')}
+        ${arr.map(s => `<span class="${style ? 'bg-amber-50 text-amber-700' : 'bg-gray-100 text-gray-600'} text-xs px-2 py-0.5 rounded">${s}</span>`).join('')}
       </div>
     </div>`;
   };
+
+  const proxyRows = [
+    { bucket: 'Demand Current only', count: r.current_only.length,
+      note: `talent_pool_size = ${px.supply?.toLocaleString()} (80% of min supply ${px.min_supply?.toLocaleString()}); demand_previous_year = ${px.current?.toLocaleString()} (80% of min current demand ${px.min_current?.toLocaleString()})` },
+    { bucket: 'Demand Previous only', count: r.previous_only.length,
+      note: `talent_pool_size = ${px.supply?.toLocaleString()} (80% of min supply); demand_current_year = ${px.previous?.toLocaleString()} (80% of min previous demand ${px.min_previous?.toLocaleString()})` },
+    { bucket: 'Current + Previous (missing supply)', count: r.current_and_previous.length,
+      note: `talent_pool_size = ${px.supply?.toLocaleString()} (80% of min supply ${px.min_supply?.toLocaleString()})` },
+  ].filter(p => p.count > 0);
 
   document.getElementById('recon-content').innerHTML = `
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
@@ -976,7 +1057,7 @@ function renderRecon() {
         { label: 'Supply Skills',          value: r.supply_total },
         { label: 'Current Demand Skills',  value: r.demand_current_total },
         { label: 'Previous Demand Skills', value: r.demand_previous_total },
-        { label: 'Common (Matched)',       value: r.common_count },
+        { label: 'Fully Matched',          value: r.common_count },
       ].map(c => `<div class="bg-gray-50 rounded-lg p-4 text-center border border-gray-200">
         <p class="text-xs text-gray-500 mb-1">${c.label}</p>
         <p class="text-2xl font-bold text-gray-800">${c.value}</p>
@@ -986,19 +1067,41 @@ function renderRecon() {
     <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-5 flex items-center gap-4">
       <div class="text-4xl font-black ${matchColor}">${r.match_rate}%</div>
       <div>
-        <p class="font-semibold text-gray-700">Match Rate</p>
+        <p class="font-semibold text-gray-700">Full-Match Rate</p>
         <p class="text-sm text-gray-500">${r.common_count} of ${r.total_unique} unique skills matched across all three tables</p>
         ${r.match_rate < 50 ? '<p class="text-xs text-red-600 mt-1">⚠ W005 — Low match rate. Check for skill name inconsistencies across tables.</p>' : ''}
       </div>
     </div>
 
+    ${proxyRows.length ? `
+    <div class="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-5">
+      <p class="font-semibold text-amber-800 mb-1">🔶 Proxy Values Applied</p>
+      <p class="text-xs text-amber-700 mb-3">The following buckets were included in the analysis using proxy values (marked <sup>*</sup> in the Results Table). All carry <strong>Low</strong> confidence.</p>
+      <div class="overflow-x-auto">
+        <table class="text-xs w-full">
+          <thead><tr class="text-amber-800">
+            <th class="text-left py-1 pr-4">Bucket</th>
+            <th class="text-right pr-4">Skills</th>
+            <th class="text-left">Proxy applied</th>
+          </tr></thead>
+          <tbody>
+            ${proxyRows.map(p => `<tr class="border-t border-amber-200">
+              <td class="py-1 pr-4 font-medium text-amber-900">${p.bucket}</td>
+              <td class="text-right pr-4 text-amber-800">${p.count}</td>
+              <td class="text-amber-700">${p.note}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>` : ''}
+
     <div class="space-y-1">
-      ${renderList('Supply only (not in demand tables)', r.supply_only)}
-      ${renderList('Demand Current only', r.current_only)}
-      ${renderList('Demand Previous only', r.previous_only)}
+      ${renderList('Supply only — excluded (no demand data)', r.supply_only)}
+      ${renderList('Demand Current only — included with proxy values ✓', r.current_only, 'text-amber-700')}
+      ${renderList('Demand Previous only — included with proxy values ✓', r.previous_only, 'text-amber-700')}
       ${renderList('Supply + Current (missing previous year)', r.supply_and_current)}
       ${renderList('Supply + Previous (missing current year)', r.supply_and_previous)}
-      ${renderList('Current + Previous (missing supply)', r.current_and_previous)}
+      ${renderList('Current + Previous (missing supply) — included with proxy values ✓', r.current_and_previous, 'text-amber-700')}
     </div>
   `;
 }
